@@ -5,7 +5,7 @@
 #include <string.h>
 
 int main() {
-  struct Arena *arena = arena_init(1024); // 1 KB blocks
+  struct Arena *arena = arena_init(50); // 1 KB blocks
 
   if (!arena) {
     printf("Failed to create arena\n");
@@ -15,16 +15,24 @@ int main() {
   // Allocate some memory
   char *name = arena_alloc(arena, 32, ARENA_ALIGNOF(char));
   strcpy(name, "Rizki Rakasiwi");
+  printf("Name: %s, Pointer: %p\n", name, arena->current);
 
   int *numbers = arena_alloc(arena, 5 * sizeof(int), ARENA_ALIGNOF(int));
   for (int i = 0; i < 5; i++)
     numbers[i] = i * 10;
 
-  printf("Name: %s\n", name);
   printf("Numbers:");
   for (int i = 0; i < 5; i++)
     printf(" %d", numbers[i]);
-  printf("\n");
+  printf(" Pointer: %p\n", arena->current);
+
+  struct ArenaBlock *block = arena->head;
+  while (block) {
+    struct ArenaBlock *next = block->next;
+    printf("Block: %p, Index: %zu, Capacity: %zu, Next: %p\n", block,
+           block->index, block->capacity, block->next);
+    block = next;
+  }
 
   // Reset (keep blocks but reuse memory)
   arena_reset(arena);

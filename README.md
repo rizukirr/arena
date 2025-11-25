@@ -44,20 +44,107 @@ The arena allocator manages memory through a linked list of blocks:
 ```
 
 
+## Usage Pattern: Scoped Lifetimes
+
+**This arena is designed for scoped lifetime allocation.** Allocate temporary data within a scope, use it, then free everything at once.
+
+### Correct Usage
+
+```c
+void process_request(Request *req) {
+    Arena *arena = arena_init(4096);
+
+    // Allocate temporary objects
+    char *buffer = arena_alloc(arena, 1024, 8);
+    Node *ast = parse_with_arena(arena, req->data);
+    Result *result = process_ast(arena, ast);
+
+    // Use the data
+    send_response(result);
+
+    // Free everything at once
+    arena_free(arena);
+}
+```
+
+### Reusing Arena with Reset
+
+```c
+Arena *arena = arena_init(4096);
+
+for (int i = 0; i < 1000; i++) {
+    // Allocate temporary data for this iteration
+    Data *temp = process_item(arena, items[i]);
+    use_data(temp);
+
+    // Reuse the arena for next iteration
+    arena_reset(arena);
+}
+
+arena_free(arena);
+```
+
+### Anti-Patterns (Don't Do This)
+
+```c
+// BAD: Long-lived arena with mixed lifetimes
+Arena *global_arena = arena_init(4096);
+
+void function_a() {
+    char *data = arena_alloc(global_arena, 100, 8);
+    // data lives forever, can't free it individually
+}
+
+void function_b() {
+    int *nums = arena_alloc(global_arena, 1000, 4);
+    // nums also lives forever
+}
+// Arena keeps growing, never freed
+```
+
+```c
+// BAD: Trying to free individual allocations
+void *ptr = arena_alloc(arena, 100, 8);
+free(ptr);  // WRONG! This will corrupt memory
+```
+
 ## Best Practices
 
-1. **Choose appropriate block sizes**: Larger blocks reduce allocation overhead but may waste memory
-2. **Align properly**: Use proper alignment for your data types (typically `sizeof(type)`)
-3. **Don't mix arenas and malloc**: Objects allocated from the arena cannot be individually freed
-4. **Reset when possible**: Use `arena_reset()` instead of `arena_free()` in loops for better performance
-5. **One arena per lifetime**: Group allocations that should live and die together
+1. **Use scoped lifetimes**: Create arena at scope start, free at scope end
+2. **One arena per scope**: Group allocations that should live and die together
+3. **Choose appropriate block sizes**: Larger blocks reduce allocation overhead
+4. **Align properly**: Use `ARENA_ALIGNOF(type)` for type-safe alignment
+5. **Reset in loops**: Use `arena_reset()` to reuse memory across iterations
+6. **Free the arena**: Always call `arena_free()` when done - this is your only cleanup
 
-## Limitations (Not yet implemented)
+## Design Characteristics
 
-- No individual deallocation (free entire arena or nothing)
-- May waste memory if allocations vary greatly in size
-- Not thread-safe (requires external synchronization)
-- Cannot shrink allocated memory
+These are **intentional design choices**, not limitations:
+
+| Characteristic | Why It's Fine for Scoped Lifetimes |
+|----------------|-------------------------------------|
+| **No individual deallocation** | You free the entire arena at scope end |
+| **Cannot shrink memory** | Arena is freed soon anyway |
+| **Varying size allocations may waste space** | Waste is temporary and bounded by scope |
+| **Not thread-safe** | Use one arena per thread or add external locking |
+
+## When NOT to Use Arena
+
+- Long-lived objects with different lifetimes
+- Need to free individual allocations
+- Unpredictable memory growth without clear cleanup point
+- Shared mutable state across threads (without external sync)
+
+**For these cases, use `malloc/free` or a different allocator.**
+
+## When TO Use Arena
+
+- Per-request allocation in servers
+- Compiler passes (per compilation unit)
+- Game/render frame allocations
+- Parsing temporary data
+- Test fixtures (per test)
+- Any temporary data with clear start/end scope
 
 ## License
 
