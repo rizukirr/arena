@@ -1,4 +1,4 @@
-#define ARENA_IMPLEMENTATION_H
+#define ARENA_IMPLEMENTATION
 #include "arena.h"
 #include <assert.h>
 #include <stdbool.h>

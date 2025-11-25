@@ -23,79 +23,203 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdint.h>
-
-struct ArenaBlock {
-  struct ArenaBlock *next; // Point to the next block
-  size_t capacity;         // How big is this specific block
-  size_t index;            // Where is the current cursor on this block
-  uint8_t data[];          // The actual memory
-};
-struct Arena {
-  struct ArenaBlock *head;    // The first block (so we can free them all later)
-  struct ArenaBlock *current; // The block we are currently writing on
-  size_t default_block_size;  // The default block size
-};
-
-struct Arena *arena_init(size_t default_block_size);
-
-void *arena_alloc(struct Arena *arena, size_t size, size_t alignment);
-
-void arena_reset(struct Arena *arena);
-
-void arena_free(struct Arena *arena);
-
-#ifdef ARENA_IMPLEMENTATION_H
-
 #include <stdlib.h>
 
-struct Arena *arena_init(size_t default_block_size) {
+// -----------------------------------------------------------------------------
+// PUBLIC API (opaque handles)
+// -----------------------------------------------------------------------------
+
+/**
+ * @brief Get alignment of a type in a portable way.
+ *
+ * This macro expands to `alignof(type)` when compiling under C11 or newer, and
+ * otherwise computes alignment using struct offset hack. This ensures the arena
+ * allocator can correctly align memory on all compilers.
+ *
+ * @param type  Any C type whose alignment is needed.
+ */
+#if __STDC_VERSION__ >= 201112L
+#include <stdalign.h>
+#define ARENA_ALIGNOF(type) alignof(type)
+#else
+#define ARENA_ALIGNOF(type)                                                    \
+  offsetof(                                                                    \
+      struct {                                                                 \
+        char c;                                                                \
+        type d;                                                                \
+      },                                                                       \
+      d)
+#endif
+
+/**
+ * @brief Opaque handle for an Arena allocator.
+ *
+ * The internal structure is hidden from users unless
+ * `ARENA_IMPLEMENTATION` is defined. The arena manages memory using
+ * fixed-size blocks and fast bump-pointer allocation.
+ */
+typedef struct Arena Arena;
+
+/**
+ * @brief Create a new arena allocator.
+ *
+ * This allocates an `Arena` structure but does **not** allocate any memory
+ * blocks yet. Blocks are lazily allocated on the first call to `arena_alloc()`.
+ *
+ * @param default_block_size  The size (in bytes) of each allocated block.
+ *                            Larger allocations will allocate a block sized
+ *                            exactly large enough for the request.
+ *
+ * @return Pointer to a newly initialized Arena, or NULL if allocation fails.
+ */
+Arena *arena_init(size_t default_block_size);
+
+/**
+ * @brief Allocate memory from the arena with a specific alignment.
+ *
+ * The arena grows by allocating new blocks when needed. Allocations never
+ * return memory to the system until `arena_free()` is called.
+ *
+ * @param arena      Pointer to a valid Arena instance.
+ * @param size       Number of bytes to allocate.
+ * @param alignment  Alignment requirement (must be power of two).
+ *
+ * @return Pointer to allocated memory, or NULL on failure.
+ */
+void *arena_alloc(Arena *arena, size_t size, size_t alignment);
+
+/**
+ * @brief Reset the arena state for reuse.
+ *
+ * All blocks remain allocated, but their internal `index` pointers are reset
+ * to zero. This effectively frees all previously allocated memory but retains
+ * the capacity.
+ *
+ * Behavior note:
+ * - The implementation resets **all blocks**.
+ * - A different design may free all but the first block.
+ *
+ * @param arena  Pointer to an Arena instance.
+ */
+void arena_reset(Arena *arena);
+
+/**
+ * @brief Release all memory owned by the arena.
+ *
+ * This frees all blocks and the Arena structure itself. After this call,
+ * the arena pointer must not be used.
+ *
+ * @param arena  Pointer to an Arena instance.
+ */
+void arena_free(Arena *arena);
+
+// -----------------------------------------------------------------------------
+// IMPLEMENTATION
+// -----------------------------------------------------------------------------
+#ifdef ARENA_IMPLEMENTATION
+
+/**
+ * @brief Internal structure representing a memory block.
+ *
+ * Each block contains:
+ *   - `next` pointer (linked list)
+ *   - `capacity` total size of the block
+ *   - `index` current write position
+ *   - `data[]` flexible array member (actual memory region)
+ */
+struct ArenaBlock {
+  struct ArenaBlock *next;
+  size_t capacity;
+  size_t index;
+  uint8_t data[];
+};
+
+/**
+ * @brief Internal arena structure.
+ *
+ * Fields:
+ *   - `head`    → first allocated block
+ *   - `current` → block currently accepting allocations
+ *   - `default_block_size` → minimum block size
+ */
+struct Arena {
+  struct ArenaBlock *head;
+  struct ArenaBlock *current;
+  size_t default_block_size;
+};
+
+/**
+ * @brief Compute padding needed to align a pointer.
+ *
+ * This uses a modulo trick:
+ *
+ *   padding = (alignment - (ptr % alignment)) % alignment
+ *
+ * This ensures:
+ *   - If pointer is already aligned → padding = 0
+ *   - Otherwise → padding = minimal offset to align
+ *
+ * @param ptr        Pointer value as integer.
+ * @param alignment  Required alignment (must be power of two).
+ *
+ * @return Number of bytes of padding needed.
+ */
+static size_t align_up(uintptr_t ptr, size_t alignment) {
+  return (alignment - (ptr % alignment)) % alignment;
+}
+
+Arena *arena_init(size_t default_block_size) {
   if (default_block_size == 0)
     return NULL;
 
-  struct Arena *arena = (struct Arena *)calloc(1, sizeof(struct Arena));
-  if (arena == NULL)
+  Arena *arena = (Arena *)calloc(1, sizeof(Arena));
+  if (!arena)
     return NULL;
 
   arena->default_block_size = default_block_size;
   return arena;
 }
 
-void *arena_alloc(struct Arena *arena, size_t size, size_t alignment) {
-  if (arena == NULL || size == 0)
+void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
+  if (!arena || size == 0 || alignment == 0)
     return NULL;
 
-  // If we don't have a current block, we need to allocate a new one
-  if (arena->current == NULL) {
+  // Ensure alignment is power of two.
+  if (alignment & (alignment - 1))
+    return NULL;
+
+  // Lazily allocate first block.
+  if (!arena->current) {
     size_t block_size =
         (size > arena->default_block_size) ? size : arena->default_block_size;
 
     struct ArenaBlock *block =
         (struct ArenaBlock *)malloc(sizeof(struct ArenaBlock) + block_size);
-    if (block == NULL)
+    if (!block)
       return NULL;
 
     block->next = NULL;
     block->capacity = block_size;
     block->index = 0;
 
-    arena->head = block;
-    arena->current = block;
+    arena->head = arena->current = block;
   }
 
-  // Align the current index
+  // Compute padding for alignment.
   uintptr_t current_ptr =
       (uintptr_t)(arena->current->data + arena->current->index);
-  uintptr_t offset = current_ptr % alignment;
-  size_t padding = (offset == 0) ? 0 : (alignment - offset);
 
-  // check if we fit int the current block
-  if (arena->current->index + size + padding > arena->current->capacity) {
-    // We are full, create a new block
+  size_t padding = align_up(current_ptr, alignment);
+
+  // If insufficient space, allocate a new block.
+  if (arena->current->index + padding + size > arena->current->capacity) {
+
     size_t next_capacity =
         (size > arena->default_block_size) ? size : arena->default_block_size;
+
     struct ArenaBlock *new_block =
         (struct ArenaBlock *)malloc(sizeof(struct ArenaBlock) + next_capacity);
-    if (new_block == NULL)
+    if (!new_block)
       return NULL;
 
     new_block->next = NULL;
@@ -106,38 +230,43 @@ void *arena_alloc(struct Arena *arena, size_t size, size_t alignment) {
     arena->current = new_block;
 
     current_ptr = (uintptr_t)new_block->data;
-    offset = current_ptr % alignment;
-    padding = (offset == 0) ? 0 : (alignment - offset);
+    padding = align_up(current_ptr, alignment);
   }
 
-  // Perform the actual allocation
+  // Perform the allocation.
   arena->current->index += padding;
-  void *ptr = (void *)(arena->current->data + arena->current->index);
+  void *ptr = arena->current->data + arena->current->index;
   arena->current->index += size;
+
   return ptr;
 }
 
-void arena_reset(struct Arena *arena) {
+void arena_reset(Arena *arena) {
+  if (!arena)
+    return;
+
   struct ArenaBlock *block = arena->head;
-  while (block != NULL) {
+  while (block) {
     block->index = 0;
     block = block->next;
   }
-  // Point current back to the start
   arena->current = arena->head;
 }
 
-void arena_free(struct Arena *arena) {
+void arena_free(Arena *arena) {
+  if (!arena)
+    return;
+
   struct ArenaBlock *block = arena->head;
-  while (block != NULL) {
+  while (block) {
     struct ArenaBlock *next = block->next;
-    free(block); // Free the "Page"
+    free(block);
     block = next;
   }
   free(arena);
 }
 
-#endif // ARENA_IMPLEMENTATION_H
+#endif // ARENA_IMPLEMENTATION
 
 #ifdef __cplusplus
 }
