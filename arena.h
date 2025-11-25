@@ -17,9 +17,12 @@
 #ifndef ARENA_H
 #define ARENA_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 
 struct ArenaBlock {
   struct ArenaBlock *next; // Point to the next block
@@ -33,7 +36,19 @@ struct Arena {
   size_t default_block_size;  // The default block size
 };
 
-static inline struct Arena *arena_init(size_t default_block_size) {
+struct Arena *arena_init(size_t default_block_size);
+
+void *arena_alloc(struct Arena *arena, size_t size, size_t alignment);
+
+void arena_reset(struct Arena *arena);
+
+void arena_free(struct Arena *arena);
+
+#ifdef ARENA_IMPLEMENTATION_H
+
+#include <stdlib.h>
+
+struct Arena *arena_init(size_t default_block_size) {
   if (default_block_size == 0)
     return NULL;
 
@@ -45,8 +60,7 @@ static inline struct Arena *arena_init(size_t default_block_size) {
   return arena;
 }
 
-static inline void *arena_alloc(struct Arena *arena, size_t size,
-                                size_t alignment) {
+void *arena_alloc(struct Arena *arena, size_t size, size_t alignment) {
   if (arena == NULL || size == 0)
     return NULL;
 
@@ -103,7 +117,7 @@ static inline void *arena_alloc(struct Arena *arena, size_t size,
   return ptr;
 }
 
-static inline void arena_reset(struct Arena *arena) {
+void arena_reset(struct Arena *arena) {
   struct ArenaBlock *block = arena->head;
   while (block != NULL) {
     block->index = 0;
@@ -113,7 +127,7 @@ static inline void arena_reset(struct Arena *arena) {
   arena->current = arena->head;
 }
 
-static inline void arena_free(struct Arena *arena) {
+void arena_free(struct Arena *arena) {
   struct ArenaBlock *block = arena->head;
   while (block != NULL) {
     struct ArenaBlock *next = block->next;
@@ -122,5 +136,11 @@ static inline void arena_free(struct Arena *arena) {
   }
   free(arena);
 }
+
+#endif // ARENA_IMPLEMENTATION_H
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // ARENA_H

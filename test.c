@@ -1,17 +1,17 @@
-#define ARENA_IMPLEMENTATION
+#define ARENA_IMPLEMENTATION_H
 #include "arena.h"
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
-#define TEST(name) \
-  static void name(); \
-  static void name##_runner() { \
-    printf("Running test: %s\n", #name); \
-    name(); \
-    printf("  ✓ %s passed\n", #name); \
-  } \
+#define TEST(name)                                                             \
+  static void name();                                                          \
+  static void name##_runner() {                                                \
+    printf("Running test: %s\n", #name);                                       \
+    name();                                                                    \
+    printf("  ✓ %s passed\n", #name);                                          \
+  }                                                                            \
   static void name()
 
 #define RUN_TEST(name) name##_runner()
