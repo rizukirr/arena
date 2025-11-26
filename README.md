@@ -31,7 +31,9 @@ The arena allocator manages memory through a linked list of blocks:
    - If space is available in the current block, bump the pointer and return
    - If not, allocate a new block and add it to the chain
 3. **Reset**: Zero all block indices to reuse the memory
-4. **Cleanup**: Free all blocks with a single call
+4. **Checkpoint**: Save the current allocation position
+5. **Restore**: Restore the arena to a previously saved checkpoint
+6. **Cleanup**: Free all blocks with a single call
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
@@ -80,6 +82,35 @@ for (int i = 0; i < 1000; i++) {
     // Reuse the arena for next iteration
     arena_reset(arena);
 }
+
+arena_free(arena);
+```
+
+### Checkpoint and Restore
+
+For more fine-grained control over memory lifetimes, the arena supports checkpoints. A checkpoint saves the current allocation position, allowing you to roll back all subsequent allocations without affecting those made before the checkpoint.
+
+This is useful for temporary allocations within a larger scope where you don't want to reset the entire arena.
+
+```c
+Arena *arena = arena_init(8192);
+
+// Allocate some persistent data
+Config *config = arena_alloc(arena, sizeof(Config), 8);
+
+// Save the current state
+ArenaCheckpoint cp = arena_checkpoint(arena);
+
+// Perform some temporary allocations
+for (int i = 0; i < 100; i++) {
+    void *temp_data = arena_alloc(arena, 128, 8);
+    // ... use temp_data
+
+    // Restore the arena, freeing temp_data
+    arena_restore(arena, cp);
+}
+
+// config is still valid here
 
 arena_free(arena);
 ```

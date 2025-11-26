@@ -21,6 +21,7 @@
 extern "C" {
 #endif
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -59,6 +60,19 @@ extern "C" {
  * fixed-size blocks and fast bump-pointer allocation.
  */
 typedef struct Arena Arena;
+
+/**
+ * @brief Checkpoint structure for saving/restoring arena state.
+ *
+ * Represents a specific point in the arena's allocation history.
+ * Can be used to restore the arena to a previous state, effectively
+ * freeing all allocations made after the checkpoint while keeping
+ * allocations made before it.
+ */
+typedef struct ArenaCheckpoint {
+  struct ArenaBlock *block; // Block pointer at checkpoint
+  size_t index;             // Index within block at checkpoint
+} ArenaCheckpoint;
 
 /**
  * @brief Create a new arena allocator.
@@ -113,10 +127,58 @@ void arena_reset(Arena *arena);
  */
 void arena_free(Arena *arena);
 
+/**
+ * @brief Save current arena state as a checkpoint.
+ *
+ * Returns a checkpoint representing the current allocation position.
+ * Allocations made after this point can be freed by restoring to this
+ * checkpoint using arena_restore(), while allocations made before remain
+ * intact.
+ *
+ * Supports nested checkpoints - multiple checkpoints can be saved and
+ * restored independently.
+ *
+ * @param arena Pointer to Arena instance
+ * @return Checkpoint representing current state
+ *
+ * @example Basic usage:
+ *   Arena *arena = arena_init(4096);
+ *   void *persistent = arena_alloc(arena, 1024, 8);
+ *
+ *   ArenaCheckpoint cp = arena_checkpoint(arena);
+ *
+ *   for (int i = 0; i < 1000; i++) {
+ *       void *temp = arena_alloc(arena, 512, 8);
+ *       // Use temp...
+ *       arena_restore(arena, cp);  // Free temp, keep persistent
+ *   }
+ */
+ArenaCheckpoint arena_checkpoint(Arena *arena);
+
+/**
+ * @brief Restore arena to a previous checkpoint.
+ *
+ * Resets the arena's allocation position to the saved checkpoint state.
+ * All allocations made after the checkpoint are effectively freed
+ * (their memory becomes available for reuse).
+ *
+ * IMPORTANT:
+ * - The checkpoint must be valid (from the same arena)
+ * - Using a checkpoint after arena_reset() or arena_free() is undefined
+ * behavior
+ * - Debug builds include validation checks via assertions
+ *
+ * @param arena Pointer to Arena instance
+ * @param checkpoint Previously saved checkpoint from arena_checkpoint()
+ */
+void arena_restore(Arena *arena, ArenaCheckpoint checkpoint);
+
 // -----------------------------------------------------------------------------
 // IMPLEMENTATION
 // -----------------------------------------------------------------------------
 #ifdef ARENA_IMPLEMENTATION
+
+#include <stdbool.h>
 
 /**
  * @brief Internal structure representing a memory block.
@@ -264,6 +326,47 @@ void arena_free(Arena *arena) {
     block = next;
   }
   free(arena);
+}
+
+ArenaCheckpoint arena_checkpoint(Arena *arena) {
+  assert(arena != NULL && "arena_checkpoint: arena is NULL");
+
+  ArenaCheckpoint cp = {0};
+  if (!arena->current) {
+    // Arena not yet allocated - return zero checkpoint (valid for initial
+    // state)
+    return cp;
+  }
+
+  cp.block = arena->current;
+  cp.index = arena->current->index;
+  return cp;
+}
+
+void arena_restore(Arena *arena, ArenaCheckpoint checkpoint) {
+  assert(arena != NULL && "arena_restore: arena is NULL");
+  assert(checkpoint.block != NULL &&
+         "arena_restore: checkpoint is uninitialized or invalid");
+
+// Debug validation: ensure checkpoint belongs to this arena
+#ifndef NDEBUG
+  struct ArenaBlock *block = arena->head;
+  bool found = false;
+  while (block) {
+    if (block == checkpoint.block) {
+      found = true;
+      break;
+    }
+    block = block->next;
+  }
+  assert(found && "arena_restore: checkpoint does not belong to this arena");
+  assert(checkpoint.index <= checkpoint.block->capacity &&
+         "arena_restore: checkpoint index is invalid");
+#endif
+
+  // Reset current block to checkpoint position
+  checkpoint.block->index = checkpoint.index;
+  arena->current = checkpoint.block;
 }
 
 #endif // ARENA_IMPLEMENTATION
