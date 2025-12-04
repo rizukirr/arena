@@ -5,7 +5,7 @@
 #include <string.h>
 
 int main() {
-  struct Arena *arena = arena_init(1024); // 1 KB blocks
+  struct Arena *arena = arena_create(1024); // 1 KB blocks
 
   if (!arena) {
     printf("Failed to create arena\n");

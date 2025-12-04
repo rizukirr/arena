@@ -86,7 +86,7 @@ typedef struct ArenaCheckpoint {
  *
  * @return Pointer to a newly initialized Arena, or NULL if allocation fails.
  */
-Arena *arena_init(size_t default_block_size);
+Arena *arena_create(size_t default_block_size);
 
 /**
  * @brief Allocate memory from the arena with a specific alignment.
@@ -142,7 +142,7 @@ void arena_free(Arena *arena);
  * @return Checkpoint representing current state
  *
  * @example Basic usage:
- *   Arena *arena = arena_init(4096);
+ *   Arena *arena = arena_create(4096);
  *   void *persistent = arena_alloc(arena, 1024, 8);
  *
  *   ArenaCheckpoint cp = arena_checkpoint(arena);
@@ -230,7 +230,7 @@ static size_t align_up(uintptr_t ptr, size_t alignment) {
   return (alignment - (ptr % alignment)) % alignment;
 }
 
-Arena *arena_init(size_t default_block_size) {
+Arena *arena_create(size_t default_block_size) {
   if (default_block_size == 0)
     return NULL;
 

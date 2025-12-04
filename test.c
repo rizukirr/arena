@@ -16,8 +16,8 @@
 
 #define RUN_TEST(name) name##_runner()
 
-TEST(test_arena_init_valid) {
-  struct Arena *arena = arena_init(1024);
+TEST(test_arena_create_valid) {
+  struct Arena *arena = arena_create(1024);
   assert(arena != NULL);
   assert(arena->default_block_size == 1024);
   assert(arena->head == NULL);
@@ -25,8 +25,8 @@ TEST(test_arena_init_valid) {
   arena_free(arena);
 }
 
-TEST(test_arena_init_zero_size) {
-  struct Arena *arena = arena_init(0);
+TEST(test_arena_create_zero_size) {
+  struct Arena *arena = arena_create(0);
   assert(arena == NULL);
 }
 
@@ -36,7 +36,7 @@ TEST(test_arena_alloc_null_arena) {
 }
 
 TEST(test_arena_alloc_zero_size) {
-  struct Arena *arena = arena_init(1024);
+  struct Arena *arena = arena_create(1024);
   assert(arena != NULL);
 
   void *ptr = arena_alloc(arena, 0, 8);
@@ -46,7 +46,7 @@ TEST(test_arena_alloc_zero_size) {
 }
 
 TEST(test_arena_alloc_single_allocation) {
-  struct Arena *arena = arena_init(1024);
+  struct Arena *arena = arena_create(1024);
   assert(arena != NULL);
 
   void *ptr = arena_alloc(arena, 100, 8);
@@ -61,7 +61,7 @@ TEST(test_arena_alloc_single_allocation) {
 }
 
 TEST(test_arena_alloc_multiple_allocations_same_block) {
-  struct Arena *arena = arena_init(1024);
+  struct Arena *arena = arena_create(1024);
   assert(arena != NULL);
 
   void *ptr1 = arena_alloc(arena, 100, 8);
@@ -78,7 +78,7 @@ TEST(test_arena_alloc_multiple_allocations_same_block) {
 }
 
 TEST(test_arena_alloc_larger_than_default) {
-  struct Arena *arena = arena_init(512);
+  struct Arena *arena = arena_create(512);
   assert(arena != NULL);
 
   void *ptr = arena_alloc(arena, 1024, 8);
@@ -90,7 +90,7 @@ TEST(test_arena_alloc_larger_than_default) {
 }
 
 TEST(test_arena_alloc_multiple_blocks) {
-  struct Arena *arena = arena_init(512);
+  struct Arena *arena = arena_create(512);
   assert(arena != NULL);
 
   void *ptr1 = arena_alloc(arena, 400, 8);
@@ -107,7 +107,7 @@ TEST(test_arena_alloc_multiple_blocks) {
 }
 
 TEST(test_arena_alloc_alignment_8) {
-  struct Arena *arena = arena_init(1024);
+  struct Arena *arena = arena_create(1024);
   assert(arena != NULL);
 
   void *ptr1 = arena_alloc(arena, 10, 8);
@@ -126,7 +126,7 @@ TEST(test_arena_alloc_alignment_8) {
 }
 
 TEST(test_arena_alloc_alignment_16) {
-  struct Arena *arena = arena_init(1024);
+  struct Arena *arena = arena_create(1024);
   assert(arena != NULL);
 
   void *ptr1 = arena_alloc(arena, 10, 16);
@@ -141,7 +141,7 @@ TEST(test_arena_alloc_alignment_16) {
 }
 
 TEST(test_arena_alloc_alignment_1) {
-  struct Arena *arena = arena_init(1024);
+  struct Arena *arena = arena_create(1024);
   assert(arena != NULL);
 
   void *ptr = arena_alloc(arena, 10, 1);
@@ -151,7 +151,7 @@ TEST(test_arena_alloc_alignment_1) {
 }
 
 TEST(test_arena_reset) {
-  struct Arena *arena = arena_init(512);
+  struct Arena *arena = arena_create(512);
   assert(arena != NULL);
 
   void *ptr1 = arena_alloc(arena, 400, 8);
@@ -180,7 +180,7 @@ TEST(test_arena_reset) {
 }
 
 TEST(test_arena_reset_multiple_blocks) {
-  struct Arena *arena = arena_init(256);
+  struct Arena *arena = arena_create(256);
   assert(arena != NULL);
 
   arena_alloc(arena, 200, 8);
@@ -203,7 +203,7 @@ TEST(test_arena_reset_multiple_blocks) {
 }
 
 TEST(test_arena_data_integrity) {
-  struct Arena *arena = arena_init(1024);
+  struct Arena *arena = arena_create(1024);
   assert(arena != NULL);
 
   int *num1 = arena_alloc(arena, sizeof(int), sizeof(int));
@@ -226,7 +226,7 @@ TEST(test_arena_data_integrity) {
 }
 
 TEST(test_arena_stress_many_small_allocations) {
-  struct Arena *arena = arena_init(1024);
+  struct Arena *arena = arena_create(1024);
   assert(arena != NULL);
 
   for (int i = 0; i < 100; i++) {
@@ -238,7 +238,7 @@ TEST(test_arena_stress_many_small_allocations) {
 }
 
 TEST(test_arena_mixed_sizes) {
-  struct Arena *arena = arena_init(512);
+  struct Arena *arena = arena_create(512);
   assert(arena != NULL);
 
   void *ptr1 = arena_alloc(arena, 8, 8);
@@ -259,8 +259,8 @@ TEST(test_arena_mixed_sizes) {
 int main() {
   printf("Starting arena tests...\n\n");
 
-  RUN_TEST(test_arena_init_valid);
-  RUN_TEST(test_arena_init_zero_size);
+  RUN_TEST(test_arena_create_valid);
+  RUN_TEST(test_arena_create_zero_size);
   RUN_TEST(test_arena_alloc_null_arena);
   RUN_TEST(test_arena_alloc_zero_size);
   RUN_TEST(test_arena_alloc_single_allocation);

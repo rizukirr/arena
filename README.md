@@ -54,7 +54,7 @@ The arena allocator manages memory through a linked list of blocks:
 
 ```c
 void process_request(Request *req) {
-    Arena *arena = arena_init(4096);
+    Arena *arena = arena_create(4096);
 
     // Allocate temporary objects
     char *buffer = arena_alloc(arena, 1024, 8);
@@ -72,7 +72,7 @@ void process_request(Request *req) {
 ### Reusing Arena with Reset
 
 ```c
-Arena *arena = arena_init(4096);
+Arena *arena = arena_create(4096);
 
 for (int i = 0; i < 1000; i++) {
     // Allocate temporary data for this iteration
@@ -93,7 +93,7 @@ For more fine-grained control over memory lifetimes, the arena supports checkpoi
 This is useful for temporary allocations within a larger scope where you don't want to reset the entire arena.
 
 ```c
-Arena *arena = arena_init(8192);
+Arena *arena = arena_create(8192);
 
 // Allocate some persistent data
 Config *config = arena_alloc(arena, sizeof(Config), 8);
@@ -119,7 +119,7 @@ arena_free(arena);
 
 ```c
 // BAD: Long-lived arena with mixed lifetimes
-Arena *global_arena = arena_init(4096);
+Arena *global_arena = arena_create(4096);
 
 void function_a() {
     char *data = arena_alloc(global_arena, 100, 8);
