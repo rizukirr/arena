@@ -187,6 +187,7 @@ A simple dynamic array implementation for storing pointers in C. This header-onl
 - **Simple API**: Easy-to-use functions for common array operations
 - **Header-only**: Just include the header with `ARRAYD_IMPLEMENTATION` defined once
 - **Pointer storage**: Stores `void*` pointers for maximum flexibility
+- **Helper macros**: Convenient macros for working with primitive types (int, float, double, char, etc.)
 
 ## API Reference
 
@@ -197,32 +198,74 @@ Arrayd *arrayd_new(int initial_length);
 void arrayd_clear(Arrayd *arrayd);
 ```
 
-- `arrayd_new()`: Creates a new dynamic array with the specified initial capacity
-- `arrayd_clear()`: Frees the array and all its internal memory
+- `arrayd_new()`: Creates a new dynamic array with the specified initial capacity. Aborts if initial_length is not positive or memory allocation fails.
+- `arrayd_clear()`: Frees the array and all its internal memory. Aborts if array is NULL.
 
 ### Adding and Removing Elements
 
 ```c
-int arrayd_append(Arrayd *array, void *data);
-void arrayd_remove_at(Arrayd *arr, unsigned int index);
-int arrayd_put_at(Arrayd *arr, unsigned int index, void *data);
+void arrayd_append(Arrayd *array, void *data);
+void arrayd_remove_at(Arrayd *arr, size_t index);
+int arrayd_put_at(Arrayd *arr, size_t index, void *data);
 ```
 
-- `arrayd_append()`: Adds an element to the end of the array, returns 0 on success or -1 on failure
-- `arrayd_remove_at()`: Removes the element at the specified index, shifts remaining elements left
-- `arrayd_put_at()`: Replaces the element at the specified index, returns 0 on success or -1 on failure
+- `arrayd_append()`: Adds an element to the end of the array. Aborts if array is NULL or memory allocation fails.
+- `arrayd_remove_at()`: Removes the element at the specified index, shifts remaining elements left. Aborts if index is out of bounds.
+- `arrayd_put_at()`: Replaces the element at the specified index. Aborts if index is out of bounds. Returns 0 on success.
 
 ### Accessing Elements
 
 ```c
-void *arrayd_get(Arrayd *arrayd, const unsigned int index);
-unsigned int arrayd_count(Arrayd *arr);
+void *arrayd_get(Arrayd *arrayd, const size_t index);
+size_t arrayd_count(Arrayd *arr);
 ```
 
-- `arrayd_get()`: Returns the element at the specified index, or NULL if index is invalid
-- `arrayd_count()`: Returns the current number of elements in the array
+- `arrayd_get()`: Returns the element at the specified index. Aborts if index is out of bounds.
+- `arrayd_count()`: Returns the current number of elements in the array. Aborts if array is NULL.
 
-## Usage Example
+### Helper Macros for Primitive Types
+
+The library provides convenient macros for working with primitive types:
+
+#### Append Macros
+```c
+arrayd_append_int(arrayd, val)       // Append int
+arrayd_append_char(arrayd, val)      // Append char
+arrayd_append_short(arrayd, val)     // Append short
+arrayd_append_long(arrayd, val)      // Append long
+arrayd_append_long_long(arrayd, val) // Append long long
+arrayd_append_float(arrayd, val)     // Append float
+arrayd_append_double(arrayd, val)    // Append double
+arrayd_append_string(arrayd, str)    // Append string (char*)
+```
+
+#### Get Macros
+```c
+arrayd_get_int(arrayd, index)        // Get int
+arrayd_get_char(arrayd, index)       // Get char
+arrayd_get_short(arrayd, index)      // Get short
+arrayd_get_long(arrayd, index)       // Get long
+arrayd_get_long_long(arrayd, index)  // Get long long
+arrayd_get_float(arrayd, index)      // Get float
+arrayd_get_double(arrayd, index)     // Get double
+arrayd_get_string(arrayd, index)     // Get string (char*)
+```
+
+#### Put Macros
+```c
+arrayd_put_at_int(arrayd, index, val)        // Replace with int
+arrayd_put_at_char(arrayd, index, val)       // Replace with char
+arrayd_put_at_short(arrayd, index, val)      // Replace with short
+arrayd_put_at_long(arrayd, index, val)       // Replace with long
+arrayd_put_at_long_long(arrayd, index, val)  // Replace with long long
+arrayd_put_at_float(arrayd, index, val)      // Replace with float
+arrayd_put_at_double(arrayd, index, val)     // Replace with double
+arrayd_put_at_string(arrayd, index, str)     // Replace with string (char*)
+```
+
+## Usage Examples
+
+### Example 1: Storing Pointers
 
 ```c
 #define ARRAYD_IMPLEMENTATION
@@ -249,7 +292,7 @@ int main() {
     arrayd_append(people, p2);
 
     // Get count
-    unsigned int count = arrayd_count(people); // Returns 2
+    size_t count = arrayd_count(people); // Returns 2
 
     // Access elements
     Person *first = arrayd_get(people, 0);
@@ -265,7 +308,7 @@ int main() {
     arrayd_remove_at(people, 0);
 
     // Clean up (note: you must free the stored objects yourself)
-    for (unsigned int i = 0; i < arrayd_count(people); i++) {
+    for (size_t i = 0; i < arrayd_count(people); i++) {
         free(arrayd_get(people, i));
     }
     arrayd_clear(people);
@@ -274,12 +317,63 @@ int main() {
 }
 ```
 
+### Example 2: Using Helper Macros for Primitive Types
+
+```c
+#define ARRAYD_IMPLEMENTATION
+#include "arrayd.h"
+#include <stdio.h>
+
+int main() {
+    // Create arrays for different types
+    Arrayd *numbers = arrayd_new(10);
+    Arrayd *strings = arrayd_new(5);
+    Arrayd *floats = arrayd_new(5);
+
+    // Add integers using helper macro
+    arrayd_append_int(numbers, 42);
+    arrayd_append_int(numbers, 100);
+    arrayd_append_int(numbers, -5);
+
+    // Add strings using helper macro
+    arrayd_append_string(strings, "Hello");
+    arrayd_append_string(strings, "World");
+
+    // Add floats using helper macro
+    arrayd_append_float(floats, 3.14f);
+    arrayd_append_float(floats, 2.71f);
+
+    // Access elements using helper macros
+    printf("First number: %ld\n", arrayd_get_int(numbers, 0));
+    printf("First string: %s\n", arrayd_get_string(strings, 0));
+    printf("First float: %.2f\n", arrayd_get_float(floats, 0));
+
+    // Modify elements
+    arrayd_put_at_int(numbers, 1, 200);
+    printf("Modified number: %ld\n", arrayd_get_int(numbers, 1));
+
+    // Clean up
+    arrayd_clear(numbers);
+    arrayd_clear(strings);
+    arrayd_clear(floats);
+
+    return 0;
+}
+```
+
 ## Important Notes
 
-- The array stores **pointers only** - you are responsible for allocating and freeing the actual objects
+- The array stores **pointers only** (or primitive values encoded as pointers via helper macros)
+- When storing objects: you are responsible for allocating and freeing them
 - `arrayd_clear()` only frees the array structure itself, not the objects it points to
 - The array automatically doubles in size when it reaches capacity
-- All index-based operations perform bounds checking and return error codes or NULL on failure
+- **All functions use assertions** - the program will abort on errors:
+  - NULL array or data pointer
+  - Out of bounds index access
+  - Memory allocation failures
+  - Invalid initial length (must be positive)
+- All index parameters use `size_t` type
+- `arrayd_put_at()` returns 0 on success (assertions handle errors)
 
 ## When to Use Arrayd
 

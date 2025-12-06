@@ -126,25 +126,27 @@ struct Arrayd {
 };
 
 Arrayd *arrayd_new(int initial_length) {
+  assert(initial_length > 0 && "initial_length must be positive");
+
   Arrayd *arrayd = calloc(1, sizeof(Arrayd));
-  if (!arrayd)
-    return NULL;
+  assert(arrayd && "Failed to allocate Arrayd");
 
   arrayd->data = malloc(sizeof(void *) * initial_length);
+  assert(arrayd->data && "Failed to allocate Arrayd data");
+
   arrayd->length = initial_length;
   arrayd->index = 0;
   return arrayd;
 }
 
 void arrayd_append(Arrayd *arr, void *data) {
-  if (!arr || !arr->data)
-    return;
+  assert(arr && "Arrayd is NULL");
+  assert(arr->data && "Arrayd data is NULL");
 
   if (arr->length <= arr->index) {
-    int new_length = arr->length * 2;
+    size_t new_length = arr->length * 2;
     void *array_realloc = realloc(arr->data, new_length * sizeof(void *));
-    if (!array_realloc)
-      return;
+    assert(array_realloc && "Failed to reallocate Arrayd data");
 
     arr->length = new_length;
     arr->data = array_realloc;
@@ -155,38 +157,41 @@ void arrayd_append(Arrayd *arr, void *data) {
 }
 
 int arrayd_put_at(Arrayd *arr, size_t index, void *data) {
-  if (!arr || !arr->data)
-    return -1;
-
-  if (arr->index <= index)
-    return -1;
+  assert(arr && "Arrayd is NULL");
+  assert(arr->data && "Arrayd data is NULL");
+  assert(index < arr->index && "Index out of bounds");
 
   arr->data[index] = data;
   return 0;
 }
 
 void arrayd_remove_at(Arrayd *arr, size_t index) {
-  if (!arr || !arr->data || index >= arr->index)
-    return;
+  assert(arr && "Arrayd is NULL");
+  assert(arr->data && "Arrayd data is NULL");
+  assert(index < arr->index && "Index out of bounds");
 
   memmove(&arr->data[index], &arr->data[index + 1],
           (arr->index - index - 1) * sizeof(void *));
   arr->index--;
 }
 
-size_t arrayd_count(Arrayd *arr) { return arr->index; }
+size_t arrayd_count(Arrayd *arr) {
+  assert(arr && "Arrayd is NULL");
+  return arr->index;
+}
 
 void arrayd_clear(Arrayd *arrayd) {
-  if (!arrayd)
-    return;
+  assert(arrayd && "Arrayd is NULL");
+  assert(arrayd->data && "Arrayd data is NULL");
 
   free(arrayd->data);
   free(arrayd);
 }
 
 void *arrayd_get(Arrayd *arrayd, const size_t index) {
-  if (!arrayd || !arrayd->data || index >= arrayd->index)
-    return NULL;
+  assert(arrayd && "Arrayd is NULL");
+  assert(arrayd->data && "Arrayd data is NULL");
+  assert(index < arrayd->index && "Index out of bounds");
 
   return arrayd->data[index];
 }
