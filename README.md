@@ -177,6 +177,124 @@ These are **intentional design choices**, not limitations:
 - Test fixtures (per test)
 - Any temporary data with clear start/end scope
 
+# Dynamic Array (Arrayd)
+
+A simple dynamic array implementation for storing pointers in C. This header-only library provides automatic resizing and basic array operations.
+
+## Features
+
+- **Dynamic resizing**: Automatically doubles capacity when full
+- **Simple API**: Easy-to-use functions for common array operations
+- **Header-only**: Just include the header with `ARRAYD_IMPLEMENTATION` defined once
+- **Pointer storage**: Stores `void*` pointers for maximum flexibility
+
+## API Reference
+
+### Creating and Destroying
+
+```c
+Arrayd *arrayd_new(int initial_length);
+void arrayd_clear(Arrayd *arrayd);
+```
+
+- `arrayd_new()`: Creates a new dynamic array with the specified initial capacity
+- `arrayd_clear()`: Frees the array and all its internal memory
+
+### Adding and Removing Elements
+
+```c
+int arrayd_append(Arrayd *array, void *data);
+void arrayd_remove_at(Arrayd *arr, unsigned int index);
+int arrayd_put_at(Arrayd *arr, unsigned int index, void *data);
+```
+
+- `arrayd_append()`: Adds an element to the end of the array, returns 0 on success or -1 on failure
+- `arrayd_remove_at()`: Removes the element at the specified index, shifts remaining elements left
+- `arrayd_put_at()`: Replaces the element at the specified index, returns 0 on success or -1 on failure
+
+### Accessing Elements
+
+```c
+void *arrayd_get(Arrayd *arrayd, const unsigned int index);
+unsigned int arrayd_count(Arrayd *arr);
+```
+
+- `arrayd_get()`: Returns the element at the specified index, or NULL if index is invalid
+- `arrayd_count()`: Returns the current number of elements in the array
+
+## Usage Example
+
+```c
+#define ARRAYD_IMPLEMENTATION
+#include "arrayd.h"
+
+typedef struct {
+    int id;
+    char *name;
+} Person;
+
+int main() {
+    // Create array with initial capacity of 10
+    Arrayd *people = arrayd_new(10);
+
+    // Add some people
+    Person *p1 = malloc(sizeof(Person));
+    p1->id = 1;
+    p1->name = "Alice";
+    arrayd_append(people, p1);
+
+    Person *p2 = malloc(sizeof(Person));
+    p2->id = 2;
+    p2->name = "Bob";
+    arrayd_append(people, p2);
+
+    // Get count
+    unsigned int count = arrayd_count(people); // Returns 2
+
+    // Access elements
+    Person *first = arrayd_get(people, 0);
+    printf("First person: %s\n", first->name);
+
+    // Replace an element
+    Person *p3 = malloc(sizeof(Person));
+    p3->id = 3;
+    p3->name = "Charlie";
+    arrayd_put_at(people, 1, p3);
+
+    // Remove an element
+    arrayd_remove_at(people, 0);
+
+    // Clean up (note: you must free the stored objects yourself)
+    for (unsigned int i = 0; i < arrayd_count(people); i++) {
+        free(arrayd_get(people, i));
+    }
+    arrayd_clear(people);
+
+    return 0;
+}
+```
+
+## Important Notes
+
+- The array stores **pointers only** - you are responsible for allocating and freeing the actual objects
+- `arrayd_clear()` only frees the array structure itself, not the objects it points to
+- The array automatically doubles in size when it reaches capacity
+- All index-based operations perform bounds checking and return error codes or NULL on failure
+
+## When to Use Arrayd
+
+- Need a simple growable array of pointers
+- Want automatic memory management for the array structure
+- Don't need complex data structure features (sorting, searching, etc.)
+- Working with heterogeneous pointer types
+
+## When NOT to Use Arrayd
+
+- Need type-safety (use typed arrays or macros instead)
+- Need to store values inline (not pointers)
+- Need advanced features like sorting or binary search
+- Working with primitive types (consider a specialized implementation)
+
 ## License
 
 Licensed under the Apache License, Version 2.0 (the "License") - see the [LICENSE](LICENSE) file for details.
