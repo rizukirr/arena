@@ -20,7 +20,6 @@
  * SOFTWARE.
  */
 
-
 #ifndef ARENA_H
 #define ARENA_H
 
@@ -220,9 +219,9 @@ struct Arena {
 /**
  * @brief Compute padding needed to align a pointer.
  *
- * This uses a modulo trick:
+ * This uses a bitmask trick (requires alignment to be power of two):
  *
- *   padding = (alignment - (ptr % alignment)) % alignment
+ *   padding = (-ptr) & (alignment - 1)
  *
  * This ensures:
  *   - If pointer is already aligned → padding = 0
@@ -234,7 +233,7 @@ struct Arena {
  * @return Number of bytes of padding needed.
  */
 static size_t align_up(uintptr_t ptr, size_t alignment) {
-  return (alignment - (ptr % alignment)) % alignment;
+  return (-(size_t)ptr) & (alignment - 1);
 }
 
 Arena *arena_create(size_t default_block_size) {
@@ -259,8 +258,9 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
 
   // Lazily allocate first block.
   if (!arena->current) {
+    size_t min_needed = size + alignment - 1;
     size_t block_size =
-        (size > arena->default_block_size) ? size : arena->default_block_size;
+        (min_needed > arena->default_block_size) ? min_needed : arena->default_block_size;
 
     struct ArenaBlock *block =
         (struct ArenaBlock *)malloc(sizeof(struct ArenaBlock) + block_size);
@@ -283,8 +283,9 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
   // If insufficient space, allocate a new block.
   if (arena->current->index + padding + size > arena->current->capacity) {
 
+    size_t min_needed = size + alignment - 1;
     size_t next_capacity =
-        (size > arena->default_block_size) ? size : arena->default_block_size;
+        (min_needed > arena->default_block_size) ? min_needed : arena->default_block_size;
 
     struct ArenaBlock *new_block =
         (struct ArenaBlock *)malloc(sizeof(struct ArenaBlock) + next_capacity);
@@ -370,6 +371,15 @@ void arena_restore(Arena *arena, ArenaCheckpoint checkpoint) {
   assert(checkpoint.index <= checkpoint.block->capacity &&
          "arena_restore: checkpoint index is invalid");
 #endif
+
+  // Free blocks allocated after checkpoint to avoid memory leak
+  struct ArenaBlock *orphan = checkpoint.block->next;
+  while (orphan) {
+    struct ArenaBlock *next = orphan->next;
+    free(orphan);
+    orphan = next;
+  }
+  checkpoint.block->next = NULL;
 
   // Reset current block to checkpoint position
   checkpoint.block->index = checkpoint.index;
