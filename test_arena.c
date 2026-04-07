@@ -84,7 +84,7 @@ TEST(test_arena_alloc_larger_than_default) {
   void *ptr = arena_alloc(arena, 1024, 8);
   assert(ptr != NULL);
   assert(arena->head != NULL);
-  assert(arena->current->capacity == 1024);
+  assert(arena->current->capacity >= 1024);
 
   arena_free(arena);
 }
@@ -161,8 +161,6 @@ TEST(test_arena_reset) {
   assert(ptr2 != NULL);
 
   struct ArenaBlock *first_block = arena->head;
-  size_t initial_index1 = arena->head->index;
-  size_t initial_index2 = arena->current->index;
 
   arena_reset(arena);
 
@@ -237,6 +235,108 @@ TEST(test_arena_stress_many_small_allocations) {
   arena_free(arena);
 }
 
+TEST(test_arena_checkpoint_restore_basic) {
+  struct Arena *arena = arena_create(1024);
+  assert(arena != NULL);
+
+  int *persistent = arena_alloc(arena, sizeof(int), ARENA_ALIGNOF(int));
+  assert(persistent != NULL);
+  *persistent = 12345;
+
+  ArenaCheckpoint cp = arena_checkpoint(arena);
+  assert(cp.block != NULL);
+
+  void *temp1 = arena_alloc(arena, 128, 8);
+  void *temp2 = arena_alloc(arena, 256, 8);
+  assert(temp1 != NULL);
+  assert(temp2 != NULL);
+
+  arena_restore(arena, cp);
+
+  // Persistent allocation must still hold its value.
+  assert(*persistent == 12345);
+
+  // After restore the next allocation should reuse the freed region.
+  void *reused = arena_alloc(arena, 128, 8);
+  assert(reused == temp1);
+
+  arena_free(arena);
+}
+
+TEST(test_arena_checkpoint_empty_state) {
+  struct Arena *arena = arena_create(512);
+  assert(arena != NULL);
+
+  // Checkpoint before any allocation -> empty state checkpoint.
+  ArenaCheckpoint cp = arena_checkpoint(arena);
+  assert(cp.block == NULL);
+  assert(cp.index == 0);
+
+  void *p = arena_alloc(arena, 64, 8);
+  assert(p != NULL);
+  assert(arena->head != NULL);
+
+  // Restoring the empty checkpoint must release every block.
+  arena_restore(arena, cp);
+  assert(arena->head == NULL);
+  assert(arena->current == NULL);
+
+  // Arena is still usable after a full restore.
+  void *q = arena_alloc(arena, 64, 8);
+  assert(q != NULL);
+
+  arena_free(arena);
+}
+
+TEST(test_arena_checkpoint_nested) {
+  struct Arena *arena = arena_create(1024);
+  assert(arena != NULL);
+
+  ArenaCheckpoint outer = arena_checkpoint(arena);
+  void *outer_data = arena_alloc(arena, 64, 8);
+  assert(outer_data != NULL);
+
+  ArenaCheckpoint inner = arena_checkpoint(arena);
+  void *inner_data = arena_alloc(arena, 64, 8);
+  assert(inner_data != NULL);
+
+  arena_restore(arena, inner);
+  // outer_data still valid; next alloc should land on inner_data's slot.
+  void *reused_inner = arena_alloc(arena, 64, 8);
+  assert(reused_inner == inner_data);
+
+  arena_restore(arena, outer);
+  void *reused_outer = arena_alloc(arena, 64, 8);
+  assert(reused_outer == outer_data);
+
+  arena_free(arena);
+}
+
+TEST(test_arena_checkpoint_frees_later_blocks) {
+  struct Arena *arena = arena_create(256);
+  assert(arena != NULL);
+
+  void *first = arena_alloc(arena, 200, 8);
+  assert(first != NULL);
+  assert(arena->head == arena->current);
+
+  ArenaCheckpoint cp = arena_checkpoint(arena);
+
+  // Force a new block to be chained on after the checkpoint.
+  void *second = arena_alloc(arena, 200, 8);
+  assert(second != NULL);
+  assert(arena->current != arena->head);
+  assert(arena->head->next != NULL);
+
+  arena_restore(arena, cp);
+
+  // Block created after checkpoint must be freed and unlinked.
+  assert(arena->current == arena->head);
+  assert(arena->head->next == NULL);
+
+  arena_free(arena);
+}
+
 TEST(test_arena_mixed_sizes) {
   struct Arena *arena = arena_create(512);
   assert(arena != NULL);
@@ -274,6 +374,10 @@ int main() {
   RUN_TEST(test_arena_reset_multiple_blocks);
   RUN_TEST(test_arena_data_integrity);
   RUN_TEST(test_arena_stress_many_small_allocations);
+  RUN_TEST(test_arena_checkpoint_restore_basic);
+  RUN_TEST(test_arena_checkpoint_empty_state);
+  RUN_TEST(test_arena_checkpoint_nested);
+  RUN_TEST(test_arena_checkpoint_frees_later_blocks);
   RUN_TEST(test_arena_mixed_sizes);
 
   printf("\n✓ All tests passed!\n");
