@@ -397,10 +397,10 @@ void arena_free(Arena *arena) {
   struct ArenaBlock *block = arena->head;
   while (block) {
     struct ArenaBlock *next = block->next;
-    free(block);
+    FREE(block);
     block = next;
   }
-  free(arena);
+  FREE(arena);
 }
 
 ArenaCheckpoint arena_checkpoint(Arena *arena) {
