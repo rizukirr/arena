@@ -34,7 +34,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdlib.h>
 
-#if defined(__cplusplus) ||                                                    \
+#if defined(__cplusplus) || \
     (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L)
 #define ARENA_NULLPTR nullptr
 #else
@@ -45,23 +45,23 @@ extern "C" {
 #include <windows.h>
 
 #define MALLOC(size) HeapAlloc(GetProcessHeap(), 0, (size))
-#define CALLOC(count, size)                                                    \
+#define CALLOC(count, size) \
   HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (count) * (size))
-#define REALLOC(ptr, size)                                                     \
-  ((ptr) ? HeapReAlloc(GetProcessHeap(), 0, (ptr), (size))                     \
+#define REALLOC(ptr, size)                                 \
+  ((ptr) ? HeapReAlloc(GetProcessHeap(), 0, (ptr), (size)) \
          : HeapAlloc(GetProcessHeap(), 0, (size)))
-#define FREE(ptr)                                                              \
-  do {                                                                         \
-    if (ptr)                                                                   \
-      HeapFree(GetProcessHeap(), 0, (ptr));                                    \
+#define FREE(ptr)                           \
+  do {                                      \
+    if (ptr)                                \
+      HeapFree(GetProcessHeap(), 0, (ptr)); \
   } while (0)
 
 #else /* Linux / macOS / POSIX */
 #include <stdlib.h>
-#define MALLOC(size) malloc(size)
+#define MALLOC(size)        malloc(size)
 #define CALLOC(count, size) calloc(count, size)
-#define REALLOC(ptr, size) realloc(ptr, size)
-#define FREE(ptr) free(ptr)
+#define REALLOC(ptr, size)  realloc(ptr, size)
+#define FREE(ptr)           free(ptr)
 
 #endif
 
@@ -78,12 +78,12 @@ extern "C" {
 #include <stdalign.h>
 #define ARENA_ALIGNOF(type) alignof(type)
 #else
-#define ARENA_ALIGNOF(type)                                                    \
-  offsetof(                                                                    \
-      struct {                                                                 \
-        char c;                                                                \
-        type d;                                                                \
-      },                                                                       \
+#define ARENA_ALIGNOF(type) \
+  offsetof(                 \
+      struct {              \
+        char c;             \
+        type d;             \
+      },                    \
       d)
 #endif
 
@@ -434,7 +434,7 @@ void arena_restore(Arena *arena, ArenaCheckpoint checkpoint) {
     struct ArenaBlock *block = arena->head;
     while (block) {
       struct ArenaBlock *next = block->next;
-      free(block);
+      FREE(block);
       block = next;
     }
     arena->head = ARENA_NULLPTR;
@@ -462,7 +462,7 @@ void arena_restore(Arena *arena, ArenaCheckpoint checkpoint) {
   struct ArenaBlock *orphan = checkpoint.block->next;
   while (orphan) {
     struct ArenaBlock *next = orphan->next;
-    free(orphan);
+    FREE(orphan);
     orphan = next;
   }
   checkpoint.block->next = ARENA_NULLPTR;
