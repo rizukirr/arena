@@ -203,8 +203,12 @@ ArenaCheckpoint arena_checkpoint(Arena *arena);
  *
  * IMPORTANT:
  * - The checkpoint must be valid (from the same arena)
- * - Using a checkpoint after arena_reset() or arena_free() is undefined
- * behavior
+ * - Blocks are rewound, never freed; memory is returned to the system only by
+ *   arena_free(). A checkpoint's block pointer therefore stays valid for the
+ *   lifetime of the arena.
+ * - Restore is memory-safe in any order, but checkpoints must be restored in
+ *   LIFO order for the resulting allocation position to be meaningful.
+ * - Using a checkpoint after arena_free() is undefined behavior
  * - Debug builds include validation checks via assertions
  *
  * @param arena Pointer to Arena instance
@@ -384,15 +388,19 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
   }
 }
 
-void arena_reset(Arena *arena) {
-  if (!arena)
-    return;
-
-  struct ArenaBlock *block = arena->head;
+/* Rewind a chain of blocks to empty without releasing any of them. */
+static void arena_rewind_chain(struct ArenaBlock *block) {
   while (block) {
     block->index = 0;
     block = block->next;
   }
+}
+
+void arena_reset(Arena *arena) {
+  if (!arena)
+    return;
+
+  arena_rewind_chain(arena->head);
   arena->current = arena->head;
 }
 
@@ -410,14 +418,11 @@ void arena_free(Arena *arena) {
 }
 
 ArenaCheckpoint arena_checkpoint(Arena *arena) {
-  assert(arena != ARENA_NULLPTR && "arena_checkpoint: arena is NULL");
+  ArenaCheckpoint cp = {ARENA_NULLPTR, 0};
 
-  ArenaCheckpoint cp = {0};
-  if (!arena->current) {
-    // Arena not yet allocated - return zero checkpoint (valid for initial
-    // state)
-    return cp;
-  }
+  assert(arena != ARENA_NULLPTR && "arena_checkpoint: arena is NULL");
+  if (!arena || !arena->current)
+    return cp; // Arena not yet allocated: zero checkpoint means "empty state".
 
   cp.block = arena->current;
   cp.index = arena->current->index;
@@ -426,48 +431,37 @@ ArenaCheckpoint arena_checkpoint(Arena *arena) {
 
 void arena_restore(Arena *arena, ArenaCheckpoint checkpoint) {
   assert(arena != ARENA_NULLPTR && "arena_restore: arena is NULL");
+  if (!arena)
+    return;
 
-  // Restore to initial empty state (checkpoint taken before first allocation).
+  // Checkpoint taken before the first allocation: rewind everything.
   if (checkpoint.block == ARENA_NULLPTR) {
     assert(checkpoint.index == 0 &&
            "arena_restore: invalid empty-state checkpoint index");
-    struct ArenaBlock *block = arena->head;
-    while (block) {
-      struct ArenaBlock *next = block->next;
-      FREE(block);
-      block = next;
-    }
-    arena->head = ARENA_NULLPTR;
-    arena->current = ARENA_NULLPTR;
+    arena_reset(arena);
     return;
   }
 
-// Debug validation: ensure checkpoint belongs to this arena
+// Debug validation: ensure checkpoint belongs to this arena.
 #ifndef NDEBUG
-  struct ArenaBlock *block = arena->head;
+  struct ArenaBlock *owned = arena->head;
   bool found = false;
-  while (block) {
-    if (block == checkpoint.block) {
+  while (owned) {
+    if (owned == checkpoint.block) {
       found = true;
       break;
     }
-    block = block->next;
+    owned = owned->next;
   }
   assert(found && "arena_restore: checkpoint does not belong to this arena");
   assert(checkpoint.index <= checkpoint.block->capacity &&
          "arena_restore: checkpoint index is invalid");
 #endif
 
-  // Free blocks allocated after checkpoint to avoid memory leak
-  struct ArenaBlock *orphan = checkpoint.block->next;
-  while (orphan) {
-    struct ArenaBlock *next = orphan->next;
-    FREE(orphan);
-    orphan = next;
-  }
-  checkpoint.block->next = ARENA_NULLPTR;
-
-  // Reset current block to checkpoint position
+  // Blocks after the checkpoint are rewound, never freed: freeing them would
+  // dangle any outstanding checkpoint pointing into them. Only arena_free()
+  // returns memory to the system.
+  arena_rewind_chain(checkpoint.block->next);
   checkpoint.block->index = checkpoint.index;
   arena->current = checkpoint.block;
 }

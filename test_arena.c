@@ -276,14 +276,15 @@ TEST(test_arena_checkpoint_empty_state) {
   assert(p != NULL);
   assert(arena->head != NULL);
 
-  // Restoring the empty checkpoint must release every block.
+  // Restoring the empty checkpoint rewinds every block but keeps them.
   arena_restore(arena, cp);
-  assert(arena->head == NULL);
-  assert(arena->current == NULL);
+  assert(arena->head != NULL);
+  assert(arena->current == arena->head);
+  assert(arena->head->index == 0);
 
-  // Arena is still usable after a full restore.
+  // The rewound capacity is reused, not re-malloc'd.
   void *q = arena_alloc(arena, 64, 8);
-  assert(q != NULL);
+  assert(q == p);
 
   arena_free(arena);
 }
@@ -312,7 +313,7 @@ TEST(test_arena_checkpoint_nested) {
   arena_free(arena);
 }
 
-TEST(test_arena_checkpoint_frees_later_blocks) {
+TEST(test_arena_checkpoint_retains_later_blocks) {
   struct Arena *arena = arena_create(256);
   assert(arena != NULL);
 
@@ -330,9 +331,44 @@ TEST(test_arena_checkpoint_frees_later_blocks) {
 
   arena_restore(arena, cp);
 
-  // Block created after checkpoint must be freed and unlinked.
+  // The later block is retained and rewound, not freed.
   assert(arena->current == arena->head);
-  assert(arena->head->next == NULL);
+  assert(arena->head->next != NULL);
+  assert(arena->head->next->index == 0);
+
+  // Refilling walks back into the retained block and reuses its memory.
+  void *refill = arena_alloc(arena, 200, 8);
+  assert(refill == second);
+
+  arena_free(arena);
+}
+
+TEST(test_arena_checkpoint_out_of_order_restore) {
+  // Regression: restoring an outer checkpoint used to free the blocks that
+  // inner checkpoints pointed into, making a later restore a use-after-free.
+  // Restore is memory-safe in any order; LIFO is required only for meaningful
+  // positioning, which this test deliberately does not assert.
+  struct Arena *arena = arena_create(64);
+  assert(arena != NULL);
+
+  void *base = arena_alloc(arena, 32, 8);
+  assert(base != NULL);
+
+  ArenaCheckpoint cp1 = arena_checkpoint(arena);
+
+  void *spill = arena_alloc(arena, 64, 8); // forces a second block
+  assert(spill != NULL);
+  assert(arena->current != arena->head);
+
+  ArenaCheckpoint cp2 = arena_checkpoint(arena);
+
+  arena_restore(arena, cp1); // must not free the block cp2 points into
+  void *after = arena_alloc(arena, 16, 8);
+  assert(after != NULL);
+
+  arena_restore(arena, cp2); // was a heap-use-after-free
+  void *tail = arena_alloc(arena, 8, 8);
+  assert(tail != NULL);
 
   arena_free(arena);
 }
@@ -377,7 +413,8 @@ int main() {
   RUN_TEST(test_arena_checkpoint_restore_basic);
   RUN_TEST(test_arena_checkpoint_empty_state);
   RUN_TEST(test_arena_checkpoint_nested);
-  RUN_TEST(test_arena_checkpoint_frees_later_blocks);
+  RUN_TEST(test_arena_checkpoint_retains_later_blocks);
+  RUN_TEST(test_arena_checkpoint_out_of_order_restore);
   RUN_TEST(test_arena_mixed_sizes);
 
   printf("\n✓ All tests passed!\n");
