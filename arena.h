@@ -41,27 +41,32 @@ extern "C" {
 #define ARENA_NULLPTR NULL
 #endif
 
+/* Allocator hooks. Define either macro before including this header to
+   substitute your own allocator. */
 #ifdef _WIN32
 #include <windows.h>
 
-#define MALLOC(size) HeapAlloc(GetProcessHeap(), 0, (size))
-#define CALLOC(count, size) \
-  HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (count) * (size))
-#define REALLOC(ptr, size)                                 \
-  ((ptr) ? HeapReAlloc(GetProcessHeap(), 0, (ptr), (size)) \
-         : HeapAlloc(GetProcessHeap(), 0, (size)))
-#define FREE(ptr)                           \
+#ifndef ARENA_MALLOC
+#define ARENA_MALLOC(size) HeapAlloc(GetProcessHeap(), 0, (size))
+#endif
+
+#ifndef ARENA_FREE
+#define ARENA_FREE(ptr)                     \
   do {                                      \
     if (ptr)                                \
       HeapFree(GetProcessHeap(), 0, (ptr)); \
   } while (0)
+#endif
 
 #else /* Linux / macOS / POSIX */
-#include <stdlib.h>
-#define MALLOC(size)        malloc(size)
-#define CALLOC(count, size) calloc(count, size)
-#define REALLOC(ptr, size)  realloc(ptr, size)
-#define FREE(ptr)           free(ptr)
+
+#ifndef ARENA_MALLOC
+#define ARENA_MALLOC(size) malloc(size)
+#endif
+
+#ifndef ARENA_FREE
+#define ARENA_FREE(ptr) free(ptr)
+#endif
 
 #endif
 
@@ -74,7 +79,9 @@ extern "C" {
  *
  * @param type  Any C type whose alignment is needed.
  */
-#if __STDC_VERSION__ >= 201112L
+#if defined(__cplusplus)
+#define ARENA_ALIGNOF(type) alignof(type)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 #include <stdalign.h>
 #define ARENA_ALIGNOF(type) alignof(type)
 #else
@@ -174,8 +181,10 @@ void arena_free(Arena *arena);
  * checkpoint using arena_restore(), while allocations made before remain
  * intact.
  *
- * Supports nested checkpoints - multiple checkpoints can be saved and
- * restored independently.
+ * Supports nested checkpoints. Blocks are rewound rather than freed, so a
+ * checkpoint stays valid for the lifetime of the arena and restoring is
+ * memory-safe in any order. Restore in LIFO order for the resulting
+ * allocation position to be meaningful.
  *
  * @param arena Pointer to Arena instance
  * @return Checkpoint representing current state
@@ -203,8 +212,12 @@ ArenaCheckpoint arena_checkpoint(Arena *arena);
  *
  * IMPORTANT:
  * - The checkpoint must be valid (from the same arena)
- * - Using a checkpoint after arena_reset() or arena_free() is undefined
- * behavior
+ * - Blocks are rewound, never freed; memory is returned to the system only by
+ *   arena_free(). A checkpoint's block pointer therefore stays valid for the
+ *   lifetime of the arena.
+ * - Restore is memory-safe in any order, but checkpoints must be restored in
+ *   LIFO order for the resulting allocation position to be meaningful.
+ * - Using a checkpoint after arena_free() is undefined behavior
  * - Debug builds include validation checks via assertions
  *
  * @param arena Pointer to Arena instance
@@ -224,21 +237,27 @@ void arena_restore(Arena *arena, ArenaCheckpoint checkpoint);
  *   - `next` pointer (linked list)
  *   - `capacity` total size of the block
  *   - `index` current write position
- *   - `data[]` flexible array member (actual memory region)
+ *
+ * The memory region itself is allocated immediately after the header in the
+ * same allocation and is reached via arena_block_data(). A flexible array
+ * member would be the obvious way to express that, but it is a C99 feature
+ * that ISO C++ forbids, and this header must be includable from C++.
  */
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4200) /* C99 flexible array member */
-#endif
 struct ArenaBlock {
   struct ArenaBlock *next;
   size_t capacity;
   size_t index;
-  uint8_t data[];
 };
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
+
+/**
+ * @brief Address of a block's memory region.
+ *
+ * The region begins immediately after the block header, so this is exactly
+ * where a `uint8_t data[]` flexible array member would have started.
+ */
+static uint8_t *arena_block_data(struct ArenaBlock *block) {
+  return (uint8_t *)(block + 1);
+}
 
 /**
  * @brief Internal arena structure.
@@ -269,7 +288,7 @@ struct Arena {
  *
  * @return Number of bytes of padding needed.
  */
-static size_t align_up(uintptr_t ptr, size_t alignment) {
+static size_t arena_align_padding(uintptr_t ptr, size_t alignment) {
   return ((size_t)0 - (size_t)ptr) & (alignment - 1);
 }
 
@@ -280,15 +299,12 @@ static bool arena_add_overflow(size_t a, size_t b, size_t *out) {
   return false;
 }
 
-static bool arena_mul_overflow(size_t a, size_t b, size_t *out) {
-  if (a != 0 && b > SIZE_MAX / a)
-    return true;
-  *out = a * b;
-  return false;
-}
-
-static bool arena_min_needed(size_t size, size_t alignment, size_t *out) {
-  return !arena_add_overflow(size, alignment - 1, out);
+/* General-purpose blocks are always default_block_size; a request too large to
+   fit one gets its own exact-fit dedicated block. Keeping the two cases
+   separate stops one large allocation from inflating every later block. */
+static size_t arena_block_size_for(const Arena *arena, size_t min_needed) {
+  return min_needed > arena->default_block_size ? min_needed
+                                                : arena->default_block_size;
 }
 
 static struct ArenaBlock *arena_block_create(size_t capacity) {
@@ -296,7 +312,7 @@ static struct ArenaBlock *arena_block_create(size_t capacity) {
   if (arena_add_overflow(sizeof(struct ArenaBlock), capacity, &total_size))
     return ARENA_NULLPTR;
 
-  struct ArenaBlock *block = (struct ArenaBlock *)MALLOC(total_size);
+  struct ArenaBlock *block = (struct ArenaBlock *)ARENA_MALLOC(total_size);
   if (!block)
     return ARENA_NULLPTR;
 
@@ -310,10 +326,12 @@ Arena *arena_create(size_t default_block_size) {
   if (default_block_size == 0)
     return ARENA_NULLPTR;
 
-  Arena *arena = (Arena *)CALLOC(1, sizeof(Arena));
+  Arena *arena = (Arena *)ARENA_MALLOC(sizeof(Arena));
   if (!arena)
     return ARENA_NULLPTR;
 
+  arena->head = ARENA_NULLPTR;
+  arena->current = ARENA_NULLPTR;
   arena->default_block_size = default_block_size;
   return arena;
 }
@@ -327,15 +345,13 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
     return ARENA_NULLPTR;
 
   size_t min_needed = 0;
-  if (!arena_min_needed(size, alignment, &min_needed))
+  if (arena_add_overflow(size, alignment - 1, &min_needed))
     return ARENA_NULLPTR;
 
   // Lazily allocate first block.
   if (!arena->current) {
-    size_t block_size = (min_needed > arena->default_block_size)
-                            ? min_needed
-                            : arena->default_block_size;
-    struct ArenaBlock *block = arena_block_create(block_size);
+    struct ArenaBlock *block =
+        arena_block_create(arena_block_size_for(arena, min_needed));
     if (!block)
       return ARENA_NULLPTR;
     arena->head = arena->current = block;
@@ -344,8 +360,8 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
   for (;;) {
     // Compute padding for alignment in the current block.
     uintptr_t current_ptr =
-        (uintptr_t)(arena->current->data + arena->current->index);
-    size_t padding = align_up(current_ptr, alignment);
+        (uintptr_t)(arena_block_data(arena->current) + arena->current->index);
+    size_t padding = arena_align_padding(current_ptr, alignment);
 
     size_t used = 0;
     if (arena_add_overflow(arena->current->index, padding, &used) ||
@@ -354,7 +370,7 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
 
     if (used <= arena->current->capacity) {
       arena->current->index += padding;
-      void *ptr = arena->current->data + arena->current->index;
+      void *ptr = arena_block_data(arena->current) + arena->current->index;
       arena->current->index += size;
       return ptr;
     }
@@ -365,17 +381,8 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
       continue;
     }
 
-    size_t next_capacity = arena->current->capacity;
-    if (next_capacity < arena->default_block_size)
-      next_capacity = arena->default_block_size;
-    size_t doubled = 0;
-    if (!arena_mul_overflow(next_capacity, (size_t)2, &doubled) &&
-        doubled > next_capacity)
-      next_capacity = doubled;
-    if (next_capacity < min_needed)
-      next_capacity = min_needed;
-
-    struct ArenaBlock *new_block = arena_block_create(next_capacity);
+    struct ArenaBlock *new_block =
+        arena_block_create(arena_block_size_for(arena, min_needed));
     if (!new_block)
       return ARENA_NULLPTR;
 
@@ -384,15 +391,19 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
   }
 }
 
-void arena_reset(Arena *arena) {
-  if (!arena)
-    return;
-
-  struct ArenaBlock *block = arena->head;
+/* Rewind a chain of blocks to empty without releasing any of them. */
+static void arena_rewind_chain(struct ArenaBlock *block) {
   while (block) {
     block->index = 0;
     block = block->next;
   }
+}
+
+void arena_reset(Arena *arena) {
+  if (!arena)
+    return;
+
+  arena_rewind_chain(arena->head);
   arena->current = arena->head;
 }
 
@@ -403,21 +414,18 @@ void arena_free(Arena *arena) {
   struct ArenaBlock *block = arena->head;
   while (block) {
     struct ArenaBlock *next = block->next;
-    FREE(block);
+    ARENA_FREE(block);
     block = next;
   }
-  FREE(arena);
+  ARENA_FREE(arena);
 }
 
 ArenaCheckpoint arena_checkpoint(Arena *arena) {
-  assert(arena != ARENA_NULLPTR && "arena_checkpoint: arena is NULL");
+  ArenaCheckpoint cp = {ARENA_NULLPTR, 0};
 
-  ArenaCheckpoint cp = {0};
-  if (!arena->current) {
-    // Arena not yet allocated - return zero checkpoint (valid for initial
-    // state)
-    return cp;
-  }
+  assert(arena != ARENA_NULLPTR && "arena_checkpoint: arena is NULL");
+  if (!arena || !arena->current)
+    return cp; // Arena not yet allocated: zero checkpoint means "empty state".
 
   cp.block = arena->current;
   cp.index = arena->current->index;
@@ -426,48 +434,37 @@ ArenaCheckpoint arena_checkpoint(Arena *arena) {
 
 void arena_restore(Arena *arena, ArenaCheckpoint checkpoint) {
   assert(arena != ARENA_NULLPTR && "arena_restore: arena is NULL");
+  if (!arena)
+    return;
 
-  // Restore to initial empty state (checkpoint taken before first allocation).
+  // Checkpoint taken before the first allocation: rewind everything.
   if (checkpoint.block == ARENA_NULLPTR) {
     assert(checkpoint.index == 0 &&
            "arena_restore: invalid empty-state checkpoint index");
-    struct ArenaBlock *block = arena->head;
-    while (block) {
-      struct ArenaBlock *next = block->next;
-      FREE(block);
-      block = next;
-    }
-    arena->head = ARENA_NULLPTR;
-    arena->current = ARENA_NULLPTR;
+    arena_reset(arena);
     return;
   }
 
-// Debug validation: ensure checkpoint belongs to this arena
+// Debug validation: ensure checkpoint belongs to this arena.
 #ifndef NDEBUG
-  struct ArenaBlock *block = arena->head;
+  struct ArenaBlock *owned = arena->head;
   bool found = false;
-  while (block) {
-    if (block == checkpoint.block) {
+  while (owned) {
+    if (owned == checkpoint.block) {
       found = true;
       break;
     }
-    block = block->next;
+    owned = owned->next;
   }
   assert(found && "arena_restore: checkpoint does not belong to this arena");
   assert(checkpoint.index <= checkpoint.block->capacity &&
          "arena_restore: checkpoint index is invalid");
 #endif
 
-  // Free blocks allocated after checkpoint to avoid memory leak
-  struct ArenaBlock *orphan = checkpoint.block->next;
-  while (orphan) {
-    struct ArenaBlock *next = orphan->next;
-    FREE(orphan);
-    orphan = next;
-  }
-  checkpoint.block->next = ARENA_NULLPTR;
-
-  // Reset current block to checkpoint position
+  // Blocks after the checkpoint are rewound, never freed: freeing them would
+  // dangle any outstanding checkpoint pointing into them. Only arena_free()
+  // returns memory to the system.
+  arena_rewind_chain(checkpoint.block->next);
   checkpoint.block->index = checkpoint.index;
   arena->current = checkpoint.block;
 }
