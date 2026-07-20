@@ -181,8 +181,10 @@ void arena_free(Arena *arena);
  * checkpoint using arena_restore(), while allocations made before remain
  * intact.
  *
- * Supports nested checkpoints - multiple checkpoints can be saved and
- * restored independently.
+ * Supports nested checkpoints. Blocks are rewound rather than freed, so a
+ * checkpoint stays valid for the lifetime of the arena and restoring is
+ * memory-safe in any order. Restore in LIFO order for the resulting
+ * allocation position to be meaningful.
  *
  * @param arena Pointer to Arena instance
  * @return Checkpoint representing current state
