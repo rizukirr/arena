@@ -16,7 +16,6 @@ A lightweight, header-only arena allocator for C with checkpoint/restore support
 - Memory is returned to the system only by `arena_free()`; `arena_reset()` and
   `arena_restore()` rewind and retain blocks for reuse
 - Custom allocator support via `ARENA_MALLOC` / `ARENA_FREE`
-- `arena_reset()` to reuse all blocks without freeing them
 - Overflow-safe size arithmetic
 - Portable: C99+ with C11/C23 alignment niceties; works on POSIX and Windows
 
@@ -43,7 +42,7 @@ char *string  = arena_alloc(arena, 256, ARENA_ALIGNOF(char));
 ArenaCheckpoint cp = arena_checkpoint(arena);
 void *temp = arena_alloc(arena, 1024, 8);
 // ... use temp ...
-arena_restore(arena, cp);  // Frees temp; earlier allocations remain
+arena_restore(arena, cp);  // Reclaims temp for reuse; earlier allocations remain
 
 // Reset for reuse (keeps allocated blocks)
 arena_reset(arena);
@@ -63,6 +62,36 @@ cc -std=c11 -Wall -Wextra -O2 -o arena_example example/arena_example.c
 cc -std=c11 -Wall -Wextra -O2 -o test_arena test_arena.c
 ./test_arena
 ```
+
+The full check the library is developed against — the test suite under both
+sanitizers, plus two guard translation units that would silently rot otherwise:
+
+```sh
+# Test suite under AddressSanitizer + UndefinedBehaviorSanitizer
+cc -std=c11 -Wall -Wextra -Wpedantic -Wundef -fsanitize=address,undefined -g \
+   -o test_arena test_arena.c && ./test_arena
+
+# Guard: the header must not claim unprefixed global macros (FREE, MALLOC, ...)
+cc -std=c11 -Wall -Wextra -o test_macro_pollution test_macro_pollution.c \
+   && ./test_macro_pollution
+
+# Guard: the header must compile and run as C++
+g++ -std=c++17 -Wall -Wextra -Wpedantic -o test_cpp test_cpp.cpp && ./test_cpp
+```
+
+### Windows
+
+The Windows branch (`HeapAlloc`/`HeapFree`) is verified by cross-compiling with
+mingw-w64, which catches signature and macro-expansion errors in that branch:
+
+```sh
+x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c test_arena.c -o /dev/null
+i686-w64-mingw32-gcc   -std=c11 -Wall -Wextra -Werror -c test_arena.c -o /dev/null
+```
+
+Note that this is compile-and-link coverage only. The suite has not been
+*executed* on Windows, so runtime behavior on that platform rests on the
+POSIX runtime results plus the cross-compile above.
 
 ## API Reference
 

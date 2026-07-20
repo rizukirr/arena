@@ -391,6 +391,80 @@ TEST(test_arena_large_alloc_does_not_inflate_next_block) {
   arena_free(arena);
 }
 
+TEST(test_arena_alloc_over_aligned) {
+  // Guards the `+ alignment - 1` term in the block-sizing path. Without it an
+  // over-aligned request could not be guaranteed to fit the block reserved for
+  // it, so simplifying min_needed to just `size` must fail here rather than
+  // silently break page- and cache-line-aligned allocations.
+  size_t alignment;
+  for (alignment = 32; alignment <= 4096; alignment <<= 1) {
+    // Default block size deliberately smaller than the alignment.
+    struct Arena *arena = arena_create(64);
+    assert(arena != NULL);
+
+    void *p = arena_alloc(arena, 100, alignment);
+    assert(p != NULL);
+    assert(((uintptr_t)p % alignment) == 0);
+
+    arena_free(arena);
+  }
+
+  // Over-aligned allocation into a block that is already partially used, so
+  // the padding computation does real work rather than returning zero.
+  struct Arena *arena = arena_create(8192);
+  assert(arena != NULL);
+
+  void *first = arena_alloc(arena, 1, 1);
+  assert(first != NULL);
+
+  void *aligned = arena_alloc(arena, 64, 512);
+  assert(aligned != NULL);
+  assert(((uintptr_t)aligned % 512) == 0);
+
+  arena_free(arena);
+}
+
+TEST(test_arena_restore_retains_bounded_capacity) {
+  // Restore never frees, so retained capacity must converge rather than grow
+  // without bound across repeated checkpoint/restore cycles.
+  struct Arena *arena = arena_create(256);
+  assert(arena != NULL);
+
+  void *persistent = arena_alloc(arena, 64, 8);
+  assert(persistent != NULL);
+
+  ArenaCheckpoint cp = arena_checkpoint(arena);
+
+  size_t capacity_after_first_cycle = 0;
+  int cycle;
+  for (cycle = 0; cycle < 100; cycle++) {
+    int i;
+    for (i = 0; i < 20; i++) {
+      void *temp = arena_alloc(arena, 100, 8);
+      assert(temp != NULL);
+    }
+    arena_restore(arena, cp);
+
+    size_t total = 0;
+    struct ArenaBlock *b = arena->head;
+    while (b) {
+      total += b->capacity;
+      b = b->next;
+    }
+
+    if (cycle == 0)
+      capacity_after_first_cycle = total;
+    else
+      // Blocks are recycled, so no cycle after the first may allocate more.
+      assert(total == capacity_after_first_cycle);
+  }
+
+  // The persistent allocation survived every restore.
+  assert(arena->head->index >= 64);
+
+  arena_free(arena);
+}
+
 TEST(test_arena_mixed_sizes) {
   struct Arena *arena = arena_create(512);
   assert(arena != NULL);
@@ -434,6 +508,8 @@ int main() {
   RUN_TEST(test_arena_checkpoint_retains_later_blocks);
   RUN_TEST(test_arena_checkpoint_out_of_order_restore);
   RUN_TEST(test_arena_large_alloc_does_not_inflate_next_block);
+  RUN_TEST(test_arena_alloc_over_aligned);
+  RUN_TEST(test_arena_restore_retains_bounded_capacity);
   RUN_TEST(test_arena_mixed_sizes);
 
   printf("\n✓ All tests passed!\n");

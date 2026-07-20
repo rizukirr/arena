@@ -237,21 +237,27 @@ void arena_restore(Arena *arena, ArenaCheckpoint checkpoint);
  *   - `next` pointer (linked list)
  *   - `capacity` total size of the block
  *   - `index` current write position
- *   - `data[]` flexible array member (actual memory region)
+ *
+ * The memory region itself is allocated immediately after the header in the
+ * same allocation and is reached via arena_block_data(). A flexible array
+ * member would be the obvious way to express that, but it is a C99 feature
+ * that ISO C++ forbids, and this header must be includable from C++.
  */
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4200) /* C99 flexible array member */
-#endif
 struct ArenaBlock {
   struct ArenaBlock *next;
   size_t capacity;
   size_t index;
-  uint8_t data[];
 };
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
+
+/**
+ * @brief Address of a block's memory region.
+ *
+ * The region begins immediately after the block header, so this is exactly
+ * where a `uint8_t data[]` flexible array member would have started.
+ */
+static uint8_t *arena_block_data(struct ArenaBlock *block) {
+  return (uint8_t *)(block + 1);
+}
 
 /**
  * @brief Internal arena structure.
@@ -354,7 +360,7 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
   for (;;) {
     // Compute padding for alignment in the current block.
     uintptr_t current_ptr =
-        (uintptr_t)(arena->current->data + arena->current->index);
+        (uintptr_t)(arena_block_data(arena->current) + arena->current->index);
     size_t padding = arena_align_padding(current_ptr, alignment);
 
     size_t used = 0;
@@ -364,7 +370,7 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
 
     if (used <= arena->current->capacity) {
       arena->current->index += padding;
-      void *ptr = arena->current->data + arena->current->index;
+      void *ptr = arena_block_data(arena->current) + arena->current->index;
       arena->current->index += size;
       return ptr;
     }
