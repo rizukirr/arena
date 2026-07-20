@@ -79,7 +79,9 @@ extern "C" {
  *
  * @param type  Any C type whose alignment is needed.
  */
-#if __STDC_VERSION__ >= 201112L
+#if defined(__cplusplus)
+#define ARENA_ALIGNOF(type) alignof(type)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 #include <stdalign.h>
 #define ARENA_ALIGNOF(type) alignof(type)
 #else
