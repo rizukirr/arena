@@ -41,27 +41,32 @@ extern "C" {
 #define ARENA_NULLPTR NULL
 #endif
 
+/* Allocator hooks. Define either macro before including this header to
+   substitute your own allocator. */
 #ifdef _WIN32
 #include <windows.h>
 
-#define MALLOC(size) HeapAlloc(GetProcessHeap(), 0, (size))
-#define CALLOC(count, size) \
-  HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (count) * (size))
-#define REALLOC(ptr, size)                                 \
-  ((ptr) ? HeapReAlloc(GetProcessHeap(), 0, (ptr), (size)) \
-         : HeapAlloc(GetProcessHeap(), 0, (size)))
-#define FREE(ptr)                           \
+#ifndef ARENA_MALLOC
+#define ARENA_MALLOC(size) HeapAlloc(GetProcessHeap(), 0, (size))
+#endif
+
+#ifndef ARENA_FREE
+#define ARENA_FREE(ptr)                     \
   do {                                      \
     if (ptr)                                \
       HeapFree(GetProcessHeap(), 0, (ptr)); \
   } while (0)
+#endif
 
 #else /* Linux / macOS / POSIX */
-#include <stdlib.h>
-#define MALLOC(size)        malloc(size)
-#define CALLOC(count, size) calloc(count, size)
-#define REALLOC(ptr, size)  realloc(ptr, size)
-#define FREE(ptr)           free(ptr)
+
+#ifndef ARENA_MALLOC
+#define ARENA_MALLOC(size) malloc(size)
+#endif
+
+#ifndef ARENA_FREE
+#define ARENA_FREE(ptr) free(ptr)
+#endif
 
 #endif
 
@@ -297,7 +302,7 @@ static struct ArenaBlock *arena_block_create(size_t capacity) {
   if (arena_add_overflow(sizeof(struct ArenaBlock), capacity, &total_size))
     return ARENA_NULLPTR;
 
-  struct ArenaBlock *block = (struct ArenaBlock *)MALLOC(total_size);
+  struct ArenaBlock *block = (struct ArenaBlock *)ARENA_MALLOC(total_size);
   if (!block)
     return ARENA_NULLPTR;
 
@@ -311,10 +316,12 @@ Arena *arena_create(size_t default_block_size) {
   if (default_block_size == 0)
     return ARENA_NULLPTR;
 
-  Arena *arena = (Arena *)CALLOC(1, sizeof(Arena));
+  Arena *arena = (Arena *)ARENA_MALLOC(sizeof(Arena));
   if (!arena)
     return ARENA_NULLPTR;
 
+  arena->head = ARENA_NULLPTR;
+  arena->current = ARENA_NULLPTR;
   arena->default_block_size = default_block_size;
   return arena;
 }
@@ -397,10 +404,10 @@ void arena_free(Arena *arena) {
   struct ArenaBlock *block = arena->head;
   while (block) {
     struct ArenaBlock *next = block->next;
-    FREE(block);
+    ARENA_FREE(block);
     block = next;
   }
-  FREE(arena);
+  ARENA_FREE(arena);
 }
 
 ArenaCheckpoint arena_checkpoint(Arena *arena) {
