@@ -373,6 +373,24 @@ TEST(test_arena_checkpoint_out_of_order_restore) {
   arena_free(arena);
 }
 
+TEST(test_arena_large_alloc_does_not_inflate_next_block) {
+  struct Arena *arena = arena_create(4096);
+  assert(arena != NULL);
+
+  // A one-off large request gets its own dedicated exact-fit block...
+  void *big = arena_alloc(arena, 1u << 20, 8); // 1 MiB
+  assert(big != NULL);
+  assert(arena->head->capacity >= (1u << 20));
+
+  // ...and must not inflate the size of the next general-purpose block.
+  void *small = arena_alloc(arena, 8, 8);
+  assert(small != NULL);
+  assert(arena->head->next != NULL);
+  assert(arena->head->next->capacity == 4096);
+
+  arena_free(arena);
+}
+
 TEST(test_arena_mixed_sizes) {
   struct Arena *arena = arena_create(512);
   assert(arena != NULL);
@@ -415,6 +433,7 @@ int main() {
   RUN_TEST(test_arena_checkpoint_nested);
   RUN_TEST(test_arena_checkpoint_retains_later_blocks);
   RUN_TEST(test_arena_checkpoint_out_of_order_restore);
+  RUN_TEST(test_arena_large_alloc_does_not_inflate_next_block);
   RUN_TEST(test_arena_mixed_sizes);
 
   printf("\n✓ All tests passed!\n");

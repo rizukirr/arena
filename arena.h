@@ -273,7 +273,7 @@ struct Arena {
  *
  * @return Number of bytes of padding needed.
  */
-static size_t align_up(uintptr_t ptr, size_t alignment) {
+static size_t arena_align_padding(uintptr_t ptr, size_t alignment) {
   return ((size_t)0 - (size_t)ptr) & (alignment - 1);
 }
 
@@ -284,15 +284,12 @@ static bool arena_add_overflow(size_t a, size_t b, size_t *out) {
   return false;
 }
 
-static bool arena_mul_overflow(size_t a, size_t b, size_t *out) {
-  if (a != 0 && b > SIZE_MAX / a)
-    return true;
-  *out = a * b;
-  return false;
-}
-
-static bool arena_min_needed(size_t size, size_t alignment, size_t *out) {
-  return !arena_add_overflow(size, alignment - 1, out);
+/* General-purpose blocks are always default_block_size; a request too large to
+   fit one gets its own exact-fit dedicated block. Keeping the two cases
+   separate stops one large allocation from inflating every later block. */
+static size_t arena_block_size_for(const Arena *arena, size_t min_needed) {
+  return min_needed > arena->default_block_size ? min_needed
+                                                : arena->default_block_size;
 }
 
 static struct ArenaBlock *arena_block_create(size_t capacity) {
@@ -331,15 +328,13 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
     return ARENA_NULLPTR;
 
   size_t min_needed = 0;
-  if (!arena_min_needed(size, alignment, &min_needed))
+  if (arena_add_overflow(size, alignment - 1, &min_needed))
     return ARENA_NULLPTR;
 
   // Lazily allocate first block.
   if (!arena->current) {
-    size_t block_size = (min_needed > arena->default_block_size)
-                            ? min_needed
-                            : arena->default_block_size;
-    struct ArenaBlock *block = arena_block_create(block_size);
+    struct ArenaBlock *block =
+        arena_block_create(arena_block_size_for(arena, min_needed));
     if (!block)
       return ARENA_NULLPTR;
     arena->head = arena->current = block;
@@ -349,7 +344,7 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
     // Compute padding for alignment in the current block.
     uintptr_t current_ptr =
         (uintptr_t)(arena->current->data + arena->current->index);
-    size_t padding = align_up(current_ptr, alignment);
+    size_t padding = arena_align_padding(current_ptr, alignment);
 
     size_t used = 0;
     if (arena_add_overflow(arena->current->index, padding, &used) ||
@@ -369,17 +364,8 @@ void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
       continue;
     }
 
-    size_t next_capacity = arena->current->capacity;
-    if (next_capacity < arena->default_block_size)
-      next_capacity = arena->default_block_size;
-    size_t doubled = 0;
-    if (!arena_mul_overflow(next_capacity, (size_t)2, &doubled) &&
-        doubled > next_capacity)
-      next_capacity = doubled;
-    if (next_capacity < min_needed)
-      next_capacity = min_needed;
-
-    struct ArenaBlock *new_block = arena_block_create(next_capacity);
+    struct ArenaBlock *new_block =
+        arena_block_create(arena_block_size_for(arena, min_needed));
     if (!new_block)
       return ARENA_NULLPTR;
 
